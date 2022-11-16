@@ -5,18 +5,24 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define DEBUG_ENABLED 1
+// uncomment this to enable debug #define DEBUG_ENABLED 1
 
 #define TC_ACT_OK	0
 #define ETH_P_IP	0x0800		/* Internet Protocol packet	*/
 #define TEST_NODEPORT   ((unsigned short) 31000)
 
+struct np_backends {
+        __be32 be1;
+        __be32 be2;
+};
+
+
 struct {
         __uint(type, BPF_MAP_TYPE_HASH);
         __uint(max_entries, 8192);
-        __type(key, __u32);
-        __type(value, __u32);
-} exec_start SEC(".maps");
+        __type(key, __u16);
+        __type(value, struct np_backends);
+} svc_map SEC(".maps");
 
 struct bpf_ct_opts {
         s32 netns_id;
@@ -55,6 +61,9 @@ int nodeport_lb4(struct __sk_buff *ctx) {
         void *data = (void *)(long)ctx->data;
         struct ethhdr *eth = data;
         u64 nh_off = sizeof(*eth);
+        struct np_backends *lkup;
+        __be32  b1;
+        __be32  b2;
 
         if (data + nh_off > data_end)
                 goto out;
@@ -99,11 +108,29 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                 }
 
                 // Skip all BPF-CT unless port is of the target nodeport 
-
+/*
                 if (bpf_tuple.ipv4.dport != bpf_ntohs(TEST_NODEPORT)) {
                         goto out;
                 }
+*/
 
+                u16 key = bpf_ntohs(bpf_tuple.ipv4.dport);
+
+                lkup = (struct np_backends *) bpf_map_lookup_elem(&svc_map, &key);
+
+                if (lkup) {
+                    b1 = lkup->be1;
+                    b2 = lkup->be2;
+#ifdef DEBUG_ENABLED
+                    bpf_printk("lkup result: Full BE1 0x%X  BE2 0x%X \n",
+                                      b1, b2);
+#endif
+                } else {
+#ifdef DEBUG_ENABLED
+                    bpf_printk("lkup result: NULL \n");
+#endif
+                    return TC_ACT_OK;
+                }
 
 
                 ct = bpf_skb_ct_lookup(ctx, &bpf_tuple,
@@ -145,14 +172,22 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                     }
 
                     /* Add DNAT info */
-                    union nf_inet_addr addr = {
-                        .ip = 0x0501F00a,     /* 10.240.1.5 */
-                    };
+
+                    union nf_inet_addr addr = {};
+ 
+                    addr.ip = b1;
+
+                    if (bpf_htons(bpf_tuple.ipv4.sport) % 2) {
+                        addr.ip = b2;
+                    }
 
                     bpf_ct_set_nat_info(nct, &addr, 80, NF_NAT_MANIP_DST);
 
                     /* Now add SNAT (masquerade) info */
-                    addr.ip = 0x0101F00a;     /* 10.240.1.1 */
+                    /* For now using the node IP, check this TODO */
+                    /* addr.ip = 0x0101F00a;     Kind-Net bridge IP 10.240.1.1 */
+
+                    addr.ip = bpf_tuple.ipv4.daddr;
 
                     bpf_ct_set_nat_info(nct, &addr, -1, NF_NAT_MANIP_SRC);
 
