@@ -5,7 +5,11 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-// uncomment this to enable debug #define DEBUG_ENABLED 1
+/* Set this flag to enable/ disable debug messages */
+#define DEBUG_ENABLED false
+
+#define DEBUG_BPF_PRINTK(...) if(DEBUG_ENABLED) {bpf_printk(__VA_ARGS__);}
+
 
 #define TC_ACT_OK	0
 #define ETH_P_IP	0x0800		/* Internet Protocol packet	*/
@@ -14,12 +18,13 @@
 struct np_backends {
         __be32 be1;
         __be32 be2;
+        __u16 targetPort;
 };
 
-
+/* Simplified map definition for initial POC */
 struct {
         __uint(type, BPF_MAP_TYPE_HASH);
-        __uint(max_entries, 8192);
+        __uint(max_entries, 1024);
         __type(key, __u16);
         __type(value, struct np_backends);
 } svc_map SEC(".maps");
@@ -66,13 +71,11 @@ int nodeport_lb4(struct __sk_buff *ctx) {
         __be32  b2;
 
         if (data + nh_off > data_end)
-                goto out;
+            return TC_ACT_OK;
 
         switch (bpf_ntohs(eth->h_proto)) {
         case ETH_P_IP: {
                 struct bpf_sock_tuple bpf_tuple = {};
-                const char fmt_debug1[] = "CT lookup (ct found) 0x%X\n";
-                const char fmt_debug2[] = "CT lookup (no entry) 0x%X\n";
                 struct iphdr *iph = data + nh_off;
                 struct bpf_ct_opts opts_def = {
                         .netns_id = -1,
@@ -81,7 +84,7 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                 // bool ret;
 
 	        if ((void *)(iph + 1) > data_end)
-                        goto out;
+                    return TC_ACT_OK;
 
                 opts_def.l4proto = iph->protocol;
                 bpf_tuple.ipv4.saddr = iph->saddr;
@@ -91,7 +94,7 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                         struct tcphdr *tcph = (struct tcphdr *)(iph + 1);
 
                         if ((void *)(tcph + 1) > data_end)
-                                goto out;
+                            return TC_ACT_OK;
 
                         bpf_tuple.ipv4.sport = tcph->source;
                         bpf_tuple.ipv4.dport = tcph->dest;
@@ -99,20 +102,20 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                         struct udphdr *udph = (struct udphdr *)(iph + 1);
 
                         if ((void *)(udph + 1) > data_end)
-                                goto out;
+                            return TC_ACT_OK;
 
                         bpf_tuple.ipv4.sport = udph->source;
                         bpf_tuple.ipv4.dport = udph->dest;
                 } else {
-                        goto out;
+                        return TC_ACT_OK;
                 }
 
                 // Skip all BPF-CT unless port is of the target nodeport 
-/*
+/**
                 if (bpf_tuple.ipv4.dport != bpf_ntohs(TEST_NODEPORT)) {
-                        goto out;
+                        return TC_ACT_OK;
                 }
-*/
+**/
 
                 u16 key = bpf_ntohs(bpf_tuple.ipv4.dport);
 
@@ -121,14 +124,10 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                 if (lkup) {
                     b1 = lkup->be1;
                     b2 = lkup->be2;
-#ifdef DEBUG_ENABLED
-                    bpf_printk("lkup result: Full BE1 0x%X  BE2 0x%X \n",
-                                      b1, b2);
-#endif
+                    DEBUG_BPF_PRINTK("lkup result: Full BE1 0x%X  BE2 0x%X \n",
+                                      b1, b2)
                 } else {
-#ifdef DEBUG_ENABLED
-                    bpf_printk("lkup result: NULL \n");
-#endif
+                    DEBUG_BPF_PRINTK("lkup result: NULL \n")
                     return TC_ACT_OK;
                 }
 
@@ -138,26 +137,22 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                                        &opts_def, sizeof(opts_def));
                 // ret = !!ct;
                 if (ct) {
-#ifdef DEBUG_ENABLED
-                    bpf_trace_printk(fmt_debug1, sizeof(fmt_debug1), ct);
-                    bpf_printk("Timeout %u  status 0x%X dport 0x%X \n",  
-                                ct->timeout, ct->status, bpf_tuple.ipv4.dport);
+                    DEBUG_BPF_PRINTK("CT lookup (ct found) 0x%X\n", ct)
+                    DEBUG_BPF_PRINTK("Timeout %u  status 0x%X dport 0x%X \n",  
+                                ct->timeout, ct->status, bpf_tuple.ipv4.dport)
                     if (iph->protocol == IPPROTO_TCP) {
-                        bpf_printk("TCP proto state %u flags  %u/ %u  last_dir  %u  \n",
+                        DEBUG_BPF_PRINTK("TCP proto state %u flags  %u/ %u  last_dir  %u  \n",
                                 ct->proto.tcp.state,
                                 ct->proto.tcp.seen[0].flags, ct->proto.tcp.seen[1].flags,
-                                ct->proto.tcp.last_dir);
+                                ct->proto.tcp.last_dir)
                     }
-#endif
                     bpf_ct_release(ct);
                 } else {
-#ifdef DEBUG_ENABLED
-                    bpf_trace_printk(fmt_debug2, sizeof(fmt_debug2), 0);
-                    bpf_printk("dport 0x%X 0x%X\n",  
-                                bpf_tuple.ipv4.dport, bpf_htons(TEST_NODEPORT));
-                    bpf_printk("Got IP packet: dest: %pI4, protocol: %u", 
-                                &(iph->daddr), iph->protocol);
-#endif
+                    DEBUG_BPF_PRINTK("CT lookup (no entry) 0x%X\n", 0)
+                    DEBUG_BPF_PRINTK("dport 0x%X 0x%X\n",  
+                                bpf_tuple.ipv4.dport, bpf_htons(TEST_NODEPORT))
+                    DEBUG_BPF_PRINTK("Got IP packet: dest: %pI4, protocol: %u", 
+                                &(iph->daddr), iph->protocol)
                     /* Create a new CT entry */
 
                     struct nf_conn *nct = bpf_skb_ct_alloc(ctx,
@@ -165,13 +160,11 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                                 &opts_def, sizeof(opts_def));
 
                     if (!nct) {
-#ifdef DEBUG_ENABLED
-                        bpf_printk("bpf_skb_ct_alloc() failed\n");
-#endif
+                        DEBUG_BPF_PRINTK("bpf_skb_ct_alloc() failed\n")
                         return TC_ACT_OK;
                     }
 
-                    /* Add DNAT info */
+                    // Rudimentary load balancing for now based on received source port
 
                     union nf_inet_addr addr = {};
  
@@ -181,7 +174,8 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                         addr.ip = b2;
                     }
 
-                    bpf_ct_set_nat_info(nct, &addr, 80, NF_NAT_MANIP_DST);
+                    /* Add DNAT info */
+                    bpf_ct_set_nat_info(nct, &addr, lkup->targetPort, NF_NAT_MANIP_DST);
 
                     /* Now add SNAT (masquerade) info */
                     /* For now using the node IP, check this TODO */
@@ -195,9 +189,8 @@ int nodeport_lb4(struct __sk_buff *ctx) {
                     bpf_ct_set_status(nct, IP_CT_NEW);
 
                     ct = bpf_ct_insert_entry(nct);
-#ifdef DEBUG_ENABLED
-                    bpf_printk("bpf_ct_insert_entry() returned ct 0x%x\n", ct);
-#endif
+
+                    DEBUG_BPF_PRINTK("bpf_ct_insert_entry() returned ct 0x%x\n", ct)
 
                     if (ct) {
                         bpf_ct_release(ct);
@@ -217,12 +210,13 @@ out:
 SEC("tc")
 int tc_ingress(struct __sk_buff *ctx)
 {
+        int ret = TC_ACT_OK;
+#if 0
 	void *data_end = (void *)(__u64)ctx->data_end;
 	void *data = (void *)(__u64)ctx->data;
 	struct ethhdr *l2h = NULL;
 	struct iphdr *ip4h = NULL;
         struct tcphdr *tcph = NULL;
-        int ret = TC_ACT_OK;
 
 	if (ctx->protocol != bpf_htons(ETH_P_IP))
 		return TC_ACT_OK;
@@ -243,11 +237,10 @@ int tc_ingress(struct __sk_buff *ctx)
                 }
 
                 if (tcph->dest == bpf_htons(TEST_NODEPORT)) {
-#ifdef DEBUG_ENABLED
-                    bpf_printk("1) Got IP Nodeport packet: dest: %pI4, protocol: %u", &(ip4h->daddr), ip4h->protocol);
-#endif
+                    DEBUG_BPF_PRINTK("1) Got IP Nodeport packet: dest: %pI4, protocol: %u", &(ip4h->daddr), ip4h->protocol);
                 }
         }
+#endif
 
         ret = nodeport_lb4(ctx);
 	return ret;

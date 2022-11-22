@@ -37,12 +37,13 @@ int main(int argc, char **argv)
         struct np_backends {
             __u32    be1;
             __u32    be2;
+            __u16    targetPort;
         };
 
         struct np_backends backends;
 
         if (argc < 5) {
-                fprintf(stderr, "Usage: tc <interface_name> <nodeport> <be pod ip1> <be pod ip2>\n");
+                fprintf(stderr, "Usage: tc <interface_name> nodeport <be pod ip1> <be pod ip2> <targetPort>\n");
                 return 1;
         }
 
@@ -66,9 +67,11 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Invalid backend IP values\n");
                 return 1;
         }
-
-       printf("Debug ..  nodeport %u  be1  0x%X    be2   0x%X\n", nodeport , (uint) backends.be1, 
-                      (uint)backends.be2); 
+ 
+        if (argc < 6) 
+            backends.targetPort = 80;
+        else
+            backends.targetPort = atoi(argv[5]);
 
 	DECLARE_LIBBPF_OPTS(bpf_tc_hook, tc_hook,
 		.ifindex = ifindex, .attach_point = BPF_TC_INGRESS);
