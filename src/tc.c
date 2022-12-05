@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 /* Copyright (c) 2022 Hengqi Chen */
+/* Copyright (c) 2022 Red Hat */
 #include <signal.h>
 #include <unistd.h>
 #include "tc.skel.h"
