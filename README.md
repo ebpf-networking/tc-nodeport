@@ -2,13 +2,16 @@
 
 ## tc
 
-tc eBpf demo of Nodeport (like) N-S load balancing and SNAT/ DNAT using recently added kfuncs to support connection tracking and NAT using eBpf programs.
+tc eBpf demo of Nodeport N-S load balancing and SNAT/ DNAT using recently added kfuncs to support connection tracking and NAT using eBpf programs. This could also be an option to implement L4 Route services for the Kubernetes Gateway API using these new eBpf functions.  
 
 Notes: 
 - The design is based on Approach A2 as [documented here](https://gist.github.com/srampal/b300d1a1f847d18d362a55844944f7a7).
 - The current version is an initial Proof of Concept/ demo currently meant to validate [Approach A2](https://gist.github.com/srampal/b300d1a1f847d18d362a55844944f7a7) and the use of the newly added kfuncs for managing kernel connection tracking (conntrack) tables.
 - This requires a system built with a custom kernel currently (it has been tested using a kernel from bpf-next/ 6.0.0-rc3)
 - To build, first recursively load all the sub-modules at the top of the repo (*git submodule update --init --recursive*), then 'make tc' under src 
+
+### Tech Talk
+A Tech Talk and demo of this project is [available here](https://youtu.be/4eJYd04R7rY).
 
 ### Executing the demo
 
