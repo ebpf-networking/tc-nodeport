@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 /* Copyright (c) 2022 Hengqi Chen */
+/* Copyright (c) 2022 Red Hat */
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
